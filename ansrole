@@ -1,0 +1,132 @@
+#!/usr/bin/env bash
+#
+# ansrole
+#   executes a role against localhost, passing varval args
+#
+# usage:
+#   ansrole [--ansible-playbook-opt] [...] \
+#           <apply-onto>:<role-to-apply> \
+#           [ <varname=value> | <json> ] [...]
+# desc:
+#   - includes the role in roles/<name>.yml passing params in extra args,
+#   - applies the role onto specified hosts by limit filter
+#   - creates symlinks to plays in a `mktemp -d`
+#   - runs in the tmpdir after overlaying temporary playbook to include_role
+#   - (ansible can only do playbook-relative, not cwd-relative paths)
+#
+# todo:
+#   - once #22983 is implemented, tmpdir won't be needed anymore
+#   - also see #21890 because include_role won't expose vars until then
+#   - and #19305 will allow roles to be incl dynamically with include_role:
+#   - and #22985 with roles: itself instead of needing a task
+#
+# scott@smemsh.net
+# http://smemsh.net/src/ansrole/
+# http://spdx.org/licenses/GPL-2.0
+#
+##############################################################################
+
+anscfg=.ansible.cfg
+ansinv=.ansible.hosts
+
+tmpdir=`mktemp -d /tmp/ansrole-XXXXXXXX` || exit 121
+#trap "rm -rf ${tmpdir:?}" EXIT
+
+init_cfbase ()
+{
+	local cfbase
+
+	if \
+		test -f $anscfg &&
+		test -f $ansinv
+	then
+		cfbase="$PWD"
+	else
+		echo "cwd must be in a playbase at invocation" >&2
+		false
+		exit
+	fi
+
+	export ANSIBLE_CONFIG="$cfbase/.ansible.cfg"
+	export ANSIBLE_INVENTORY="$cfbase/.ansible.hosts"
+
+	cd $cfbase
+}
+
+usagex ()
+{
+	cat <<- %
+	ansrole [--ansible-playbook-opt] [...] \
+	    <host1>[,<host2>]:<role-to-apply> \
+	    [ <varname=value> | <json> ] [...]
+	%
+}
+
+process_args ()
+{
+	# leading -o or --options we'll pass to ansible intact
+	while [[ $1 == -* ]]
+	do opts+=("$1"); shift; done
+
+	# next arg gives a --limit (play will run only on listed
+	# hosts everything else excluded), and names the role to apply
+	# onto the so-limited hosts.  until we're using dynamic
+	# inventory groups, this will just be a comma separated list of
+	# machines to apply it onto.  so we apply on all hosts, but then
+	# limit here to only certain hosts.
+	applyonto=${1%:*}
+	rolename=${1##*:}
+	[[ $applyonto && $rolename ]] || usagex
+	shift
+
+	# var=val or json strings to pass in ansible-playbook -e
+	for arg
+	do args+=(-e); args+=("$arg"); done
+}
+
+generate_tmp_playbook ()
+{
+	cat <<- % >$tmpplay
+	- hosts: all
+	  become: true
+	  vars_files: [$(
+	    ls vars/*.yml \
+	    | awk '{printf("\"%s\", ", $0)}'
+	  )]
+	  roles: ['$rolename']
+	%
+}
+
+# workaround ansible requiring everything to be relative to
+# the play base, by making a temporary one of our own,
+# populated by symlinks to the real one.  this is truly a
+# hack, to work around ansible not having a cwd or
+# specific-dir -relative mode
+#
+init_tmp_playbase ()
+{
+	local d; for d in */; do
+		d=${d%/}; ln -s $(readlink -f $d) $tmpdir/; done
+
+	tmpplay=$tmpdir/ansrole-${rolename:?}.yml
+
+	# todo: might have to copy *.yml files from the
+	# playbase too at some point if we ever become more
+	# than just a role executor
+}
+
+main ()
+{
+	init_cfbase && \
+	process_args "$@" && \
+	init_tmp_playbase && \
+	generate_tmp_playbook && \
+	ansible-playbook \
+		--limit="${applyonto:?}" \
+		"${opts[@]}" \
+		$tmpplay \
+		"${args[@]}" \
+	;
+}
+
+main "$@"
