@@ -87,9 +87,8 @@ process_args ()
 	[[ $onto && $role ]] && rolename=$role || usagex
 
 	# var=val or json strings to pass in ansible-playbook -e
-	shift
-	for arg
-	do args+=(-e); args+=("$arg"); done
+	#
+	shift; for arg; do extras+=(-e); extras+=("$arg"); done
 }
 
 generate_tmp_playbook ()
@@ -125,15 +124,15 @@ init_tmp_playbase ()
 
 main ()
 {
-	init_cfbase && \
-	process_args "$@" && \
-	init_tmp_playbase && \
-	generate_tmp_playbook && \
+	init_cfbase &&
+	process_args "$@" &&
+	init_tmp_playbase &&
+	generate_tmp_playbook &&
 	ansible-playbook \
 		"${opts[@]}" \
 		$invarg \
 		$tmpplay \
-		"${args[@]}" \
+		"${extras[@]}" \
 	;
 }
 
