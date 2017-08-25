@@ -20,6 +20,7 @@
 #   - also see #21890 because include_role won't expose vars until then
 #   - and #19305 will allow roles to be incl dynamically with include_role:
 #   - and #22985 with roles: itself instead of needing a task
+#   - after adjusting usage in comment header, usagex() also needs update
 #
 # scott@smemsh.net
 # http://smemsh.net/src/ansrole/
@@ -48,6 +49,9 @@ init_cfbase ()
 	cd $cfbase
 }
 
+# note: adjust this in comment header too
+# todo: maybe reformat directly from $BASH_SOURCE
+#
 usagex ()
 {
 	cat <<- %
