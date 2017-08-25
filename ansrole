@@ -1,15 +1,16 @@
 #!/usr/bin/env bash
 #
 # ansrole
-#   executes a role against localhost, passing varval args
+#   executes a role against hosts or inventory groups, passing varval args
 #
 # usage:
 #   ansrole [--ansible-playbook-opt] [...] \
-#           <apply-onto>:<role-to-apply> \
+#           [<invspec>:]<apply-onto>:<role-to-apply> \
 #           [ <varname=value> | <json> ] [...]
+#           # adjust in usagex() also ## fixme
 # desc:
 #   - includes the role in roles/<name>.yml passing params in extra args,
-#   - applies the role onto specified host (only supports one per invocation!)
+#   - applies the role onto specified host (or inventory group if given)
 #   - creates symlinks to plays in a `mktemp -d`
 #   - runs in the tmpdir after overlaying temporary playbook to include_role
 #   - (ansible can only do playbook-relative, not cwd-relative paths)
@@ -51,29 +52,38 @@ usagex ()
 {
 	cat <<- %
 	ansrole [--ansible-playbook-opt] [...] \
-	    <host1>[,<host2>]:<role-to-apply> \
+	    [<invspec>:]<apply-onto>:<role-to-apply> \
 	    [ <varname=value> | <json> ] [...]
 	%
 }
 
 process_args ()
 {
+	local match nmatches onto role inv
+
 	# leading -o or --options we'll pass to ansible intact
 	while [[ $1 == -* ]]
 	do opts+=("$1"); shift; done
 
-	# next arg gives a --limit (play will run only on listed
-	# hosts everything else excluded), and names the role to apply
-	# onto the so-limited hosts.  until we're using dynamic
-	# inventory groups, this will just be a comma separated list of
-	# machines to apply it onto.  so we apply on all hosts, but then
-	# limit here to only certain hosts.
-	applyonto=${1%:*}
-	rolename=${1##*:}
-	[[ $applyonto && $rolename ]] || usagex
-	shift
+	# - format is invspec:onto:role, or host[,host[,...]]:role
+	# - invspec is x that makes sense to ansible '--inventory=x'
+	# - if invspec, 'onto' is a name in the given inventory
+	# - else list of one or more hostnames (uses dns, not inventory)
+	# - hostname is implemented with '--inventory=onto,'
+	#
+	[[ $1 =~ ^([^:]*):([^:]*)(:([^:]*))*$ ]]
+	if [[ ${BASH_REMATCH[3]} ]]; then
+		onto=${BASH_REMATCH[2]} role=${BASH_REMATCH[4]}
+		invarg="--inventory=${BASH_REMATCH[1]} --limit=$onto"
+	else
+		onto=${BASH_REMATCH[1]} role=${BASH_REMATCH[2]}
+		invarg="--inventory=$onto, --limit=$onto,"
+	fi
+
+	[[ $onto && $role ]] && rolename=$role || usagex
 
 	# var=val or json strings to pass in ansible-playbook -e
+	shift
 	for arg
 	do args+=(-e); args+=("$arg"); done
 }
@@ -116,9 +126,8 @@ main ()
 	init_tmp_playbase && \
 	generate_tmp_playbook && \
 	ansible-playbook \
-		--inventory="${applyonto:?}," \
-		--limit="${applyonto:?}," \
 		"${opts[@]}" \
+		$invarg \
 		$tmpplay \
 		"${args[@]}" \
 	;
